@@ -15,14 +15,23 @@ from .bridge import Bridge
 from .config import DEFAULT_PATH, Config, load
 
 
+class _JournalFormatter(logging.Formatter):
+    PRIORITY = {logging.DEBUG: 7, logging.INFO: 6, logging.WARNING: 4,
+                logging.ERROR: 3, logging.CRITICAL: 2}
+
+    def format(self, record: logging.LogRecord) -> str:
+        return f"<{self.PRIORITY.get(record.levelno, 6)}>{super().format(record)}"
+
+
 def setup_logging(cfg: Config, verbose: bool, to_file: bool) -> None:
     level = logging.DEBUG if verbose else getattr(logging, cfg.log_level, logging.INFO)
     root = logging.getLogger()
     root.setLevel(level)
     stream = logging.StreamHandler(sys.stderr)
     if os.environ.get("JOURNAL_STREAM"):
-        # journald adds its own timestamp
-        stream.setFormatter(logging.Formatter("%(levelname)s %(message)s"))
+        # journald adds its own timestamp; a "<N>" prefix sets the syslog
+        # priority so `journalctl -p warning` works.
+        stream.setFormatter(_JournalFormatter("%(levelname)s %(message)s"))
     else:
         stream.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s", "%H:%M:%S"))
     root.addHandler(stream)

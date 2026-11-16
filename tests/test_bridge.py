@@ -114,6 +114,26 @@ class BridgeTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.sleep(0.3)
         self.assertEqual(len(self.fake.writes()), writes_before)
 
+    async def test_every_disconnect_is_warned(self):
+        await self.start()
+        with self.assertLogs("lanebridge", "WARNING") as cm:
+            for _ in range(2):
+                subs = self.fake.count("printer.objects.subscribe")
+                await self.fake.stop()
+                await asyncio.sleep(0.1)
+                await self.fake.start()
+                await wait_for(lambda: self.fake.count("printer.objects.subscribe") > subs, timeout=3)
+        self.assertEqual(sum("Moonraker unavailable" in m for m in cm.output), 2)
+
+    async def test_usage_only_change_logged_at_debug(self):
+        await self.start()
+        self.fake.spools[9]["remaining_weight"] = 100.0
+        with self.assertLogs("lanebridge", "DEBUG") as cm:
+            await self.fake.notify("notify_spoolman_status_changed", [{"spoolman_connected": True}])
+            await wait_for(lambda: self.lanes()["lane1"]["remaining_weight"] == 100.0, timeout=2)
+        self.assertTrue(any(m.startswith("DEBUG:lanebridge:T0 -> lane1") for m in cm.output))
+        self.assertFalse(any(m.startswith("INFO:lanebridge:T0") for m in cm.output))
+
     async def test_klippy_restart_resubscribes(self):
         await self.start()
         subs = self.fake.count("printer.objects.subscribe")

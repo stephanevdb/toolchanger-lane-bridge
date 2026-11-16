@@ -12,7 +12,7 @@ from typing import Callable, Dict, Iterable, List, Optional, Set
 from websockets.exceptions import WebSocketException
 
 from .config import Config
-from .lanes import build_lane, describe, lane_key, stale_keys, tool_for_key
+from .lanes import build_lane, describe, identity_changed, lane_key, stale_keys, tool_for_key
 from .moonraker import ConnectionLost, MoonrakerClient, MoonrakerError
 from .sources import MacroVariableSource
 from .spoolman import SpoolCache, SpoolmanUnavailable, make_moonraker_fetch
@@ -46,6 +46,7 @@ class Bridge:
         self._pending_force: Set[int] = set()
         self._debounce_task: Optional[asyncio.Task] = None
         self._warned: Set[str] = set()
+        self.session_established = False
 
     # ------------------------------------------------------------------ rpc
     async def _call(self, method: str, params: Optional[dict] = None):
@@ -126,12 +127,15 @@ class Bridge:
             return False
         if same:
             return False
+        old = self.written.get(key)
         await self._call(
             "server.database.post_item",
             {"namespace": self.cfg.namespace, "key": key, "value": entry},
         )
         self.written[key] = entry
-        log.info("T%d -> %s: %s", tool, key, describe(entry))
+        # Weights and dates change with every print; only log those at DEBUG.
+        (log.info if identity_changed(old, entry) else log.debug)(
+            "T%d -> %s: %s", tool, key, describe(entry))
         return True
 
     async def load_existing(self) -> Dict[str, dict]:
@@ -228,7 +232,9 @@ class Bridge:
             self._schedule(self.tools, force=True)
 
     async def session(self) -> None:
+        self.session_established = False
         await self._connect()
+        self.session_established = True
         log.info("connected to Moonraker")
         refresh = asyncio.create_task(self._refresh_loop())
         try:
@@ -254,6 +260,9 @@ class Bridge:
             try:
                 await self.session()
             except RETRYABLE as e:
+                if self.session_established:
+                    # A working connection dropped: warn again, even after earlier failures.
+                    failing = False
                 if time.monotonic() - started > 60:
                     delay = self.cfg.reconnect_min
                 (log.debug if failing else log.warning)(

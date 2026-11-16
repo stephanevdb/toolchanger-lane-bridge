@@ -24,17 +24,49 @@ Spoolman (via /server/spoolman/proxy) ──────────┘
 Key `lane<n+1>` holds tool `T<n>`:
 
 ```json
-{"color": "#f0be02", "material": "PLA", "bed_temp": 50, "nozzle_temp": 210,
- "scan_time": "", "td": "", "lane": "1", "spool_id": 6}
+{
+  "lane": "1", "material": "PLA", "color": "#f0be02", "nozzle_temp": 210, "bed_temp": 50,
+  "spool_id": 6, "scan_time": "", "td": "",
+  "name": "Panchroma Matte Savannah Yellow", "vendor": "Polymaker",
+  "colors": ["#f0be02"], "multi_color_direction": "",
+  "spoolman_filament_id": 7, "external_id": "polymaker_pla_...",
+  "diameter": 1.75, "density": 1.24,
+  "remaining_weight": 412.3, "remaining_length": 138000, "remaining_percent": 41,
+  "used_weight": 587.7, "used_length": 197001, "initial_weight": 1000, "spool_weight": 140,
+  "price": 24.99, "location": "Dry box 2", "lot_nr": "", "comment": "", "archived": false,
+  "registered": "2026-06-29T15:37:36Z", "first_used": "...", "last_used": "...",
+  "spool_extra": {}, "filament_extra": {}
+}
 ```
+
+**Read by OrcaSlicer** (as of `59acded`): `lane`, `material`, `color`, `nozzle_temp`, `bed_temp`.
+Orca does not show remaining filament; the extra fields are for lane-based plugins and other
+readers.
 
 | field | from Spoolman |
 |---|---|
-| `color` | `filament.color_hex` with `#` added; for a multi-colour spool, the first of `multi_color_hexes` |
+| `lane` | tool number **as a string** (OrcaSlicer skips lanes where this is a number) |
 | `material` | `filament.material` |
+| `color` | `filament.color_hex` with `#` added; for a multi-colour spool, the first of `multi_color_hexes` |
 | `nozzle_temp` / `bed_temp` | `filament.settings_extruder_temp` / `settings_bed_temp`, `null` if unset |
 | `spool_id` | spool `id` |
-| `lane` | tool number **as a string** (OrcaSlicer skips lanes where this is a number) |
+| `td` | a `td` extra field on the filament (or spool), if you define one in Spoolman |
+| `name`, `vendor` | `filament.name`, `filament.vendor.name` |
+| `colors`, `multi_color_direction` | every colour of the filament, as `#rrggbb` |
+| `spoolman_filament_id`, `external_id` | `filament.id`, `filament.external_id` |
+| `diameter`, `density` | from the filament |
+| `remaining_weight` / `_length`, `used_weight` / `_length`, `initial_weight`, `spool_weight` | from the spool (grams / mm) |
+| `remaining_percent` | `remaining_weight / initial_weight`, 0–100 |
+| `price`, `location`, `lot_nr`, `comment`, `archived` | from the spool (`price` falls back to the filament's) |
+| `registered`, `first_used`, `last_used` | spool timestamps |
+| `spool_extra`, `filament_extra` | Spoolman extra fields, JSON-decoded |
+
+`filament_id` is deliberately **not** written: Orca treats it as an Orca preset ID, and
+Spoolman's IDs are not Orca preset IDs.
+
+Remaining weight and `last_used` change as you print. The bridge picks those up on its
+refresh interval (default 5 minutes) and logs them at DEBUG level only, so the log still has one
+line per spool, material or colour change.
 
 A tool with no spool, a spool that doesn't exist in Spoolman, or an archived spool gets an empty
 entry (`material: ""`, `color: ""`, temperatures `null`, `spool_id: null`). If Spoolman is
