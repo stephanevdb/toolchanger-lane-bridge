@@ -1,0 +1,193 @@
+# Spool reader: one ESP32 + two PN532 NFC readers (one per spool holder).
+#
+# When a tagged spool is placed on a holder, the reader under it:
+#   1. asks Spoolman which spool the tag belongs to  (POST /api/v1/tag/scan)
+#   2. assigns that spool to the tool via Moonraker (ASSIGN_TOOL_SPOOL TOOL=Tn ID=<spool>)
+# lanebridge, Spooler and OrcaSlicer then follow on their own.
+#
+# Unknown tags are only logged. Link a tag to a spool once in Spoolman
+# (pair a browser with this reader under Settings > Tag Scanning, then tap the tag),
+# or read the UID from the "Last tag" sensors on this device's web page.
+#
+# Wiring (ESP32 DevKit, PN532 boards switched to SPI mode):
+#   PN532      ESP32
+#   SCK   ->   GPIO18   (shared)
+#   MISO  ->   GPIO19   (shared)
+#   MOSI  ->   GPIO23   (shared)
+#   SS    ->   GPIO22   (T0 reader)  /  GPIO21 (T1 reader)
+#   VCC   ->   3V3 or 5V (check your board), GND -> GND
+#
+# For more tools, add another pn532_spi entry with its own cs_pin and tool name.
+
+substitutions:
+  name: spool-reader
+  friendly_name: Spool reader
+  spoolman_url: http://10.39.5.187:7912
+  moonraker_url: http://10.39.5.187:7125
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+
+logger:
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap: {}  # fallback hotspot if Wi-Fi is unreachable
+
+captive_portal:
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+# Status page at http://spool-reader.local (last tag per reader, logs).
+web_server:
+  port: 80
+
+# Uncomment to add the device to Home Assistant.
+# api:
+#   encryption:
+#     key: !secret api_encryption_key
+
+http_request:
+  timeout: 5s
+
+spi:
+  clk_pin: GPIO18
+  miso_pin: GPIO19
+  mosi_pin: GPIO23
+
+globals:
+  - id: current_tool
+    type: std::string
+    restore_value: false
+  - id: pending_spool
+    type: int
+    restore_value: false
+    initial_value: "0"
+
+text_sensor:
+  - platform: template
+    id: last_tag_t0
+    name: "Last tag T0"
+    icon: mdi:nfc-variant
+  - platform: template
+    id: last_tag_t1
+    name: "Last tag T1"
+    icon: mdi:nfc-variant
+  - platform: template
+    id: last_result
+    name: "Last result"
+    icon: mdi:printer-3d-nozzle
+
+pn532_spi:
+  - id: reader_t0
+    cs_pin: GPIO22
+    update_interval: 1s
+    on_tag:
+      then:
+        - text_sensor.template.publish:
+            id: last_tag_t0
+            state: !lambda "return x;"
+        - script.execute:
+            id: assign_spool
+            tool: "T0"
+            uid: !lambda "return x;"
+  - id: reader_t1
+    cs_pin: GPIO21
+    update_interval: 1s
+    on_tag:
+      then:
+        - text_sensor.template.publish:
+            id: last_tag_t1
+            state: !lambda "return x;"
+        - script.execute:
+            id: assign_spool
+            tool: "T1"
+            uid: !lambda "return x;"
+
+script:
+  - id: assign_spool
+    mode: queued
+    max_runs: 4
+    parameters:
+      tool: std::string
+      uid: std::string
+    then:
+      - lambda: |-
+          id(current_tool) = tool;
+          id(pending_spool) = 0;
+      # 1. Which spool is this tag? Spoolman strips the separators from the UID itself.
+      - http_request.post:
+          url: ${spoolman_url}/api/v1/tag/scan
+          request_headers:
+            Content-Type: application/json
+          json:
+            uid: !lambda "return uid;"
+            reader_id: !lambda 'return std::string("${name}-") + tool;'
+            name: !lambda 'return std::string("${friendly_name} ") + tool;'
+          capture_response: true
+          max_response_buffer_size: 8kB
+          on_response:
+            then:
+              - lambda: |-
+                  int spool = 0;
+                  if (response->status_code == 200) {
+                    // "matched_spool_id": <number> | null
+                    size_t pos = body.find("\"matched_spool_id\"");
+                    if (pos != std::string::npos) {
+                      pos = body.find(':', pos);
+                      if (pos != std::string::npos) {
+                        pos++;
+                        while (pos < body.size() && body[pos] == ' ') pos++;
+                        spool = atoi(body.c_str() + pos);  // "null" -> 0
+                      }
+                    }
+                  }
+                  id(pending_spool) = spool;
+                  if (response->status_code != 200) {
+                    ESP_LOGW("spool", "%s: Spoolman answered HTTP %d", id(current_tool).c_str(), response->status_code);
+                    id(last_result).publish_state(id(current_tool) + ": Spoolman error " + std::to_string(response->status_code));
+                  } else if (spool <= 0) {
+                    ESP_LOGW("spool", "%s: tag is not linked to a spool in Spoolman", id(current_tool).c_str());
+                    id(last_result).publish_state(id(current_tool) + ": unknown tag");
+                  }
+          on_error:
+            then:
+              - lambda: |-
+                  ESP_LOGW("spool", "%s: Spoolman not reachable", id(current_tool).c_str());
+                  id(last_result).publish_state(id(current_tool) + ": Spoolman not reachable");
+      # 2. Assign it to the tool.
+      - if:
+          condition:
+            lambda: "return id(pending_spool) > 0;"
+          then:
+            - http_request.post:
+                url: ${moonraker_url}/printer/gcode/script
+                request_headers:
+                  Content-Type: application/json
+                json:
+                  script: !lambda 'return "ASSIGN_TOOL_SPOOL TOOL=" + id(current_tool) + " ID=" + std::to_string(id(pending_spool));'
+                capture_response: true
+                on_response:
+                  then:
+                    - lambda: |-
+                        if (response->status_code == 200) {
+                          ESP_LOGI("spool", "%s <- spool %d", id(current_tool).c_str(), id(pending_spool));
+                          id(last_result).publish_state(id(current_tool) + " <- spool " + std::to_string(id(pending_spool)));
+                        } else {
+                          ESP_LOGW("spool", "Moonraker answered HTTP %d: %s", response->status_code, body.c_str());
+                          id(last_result).publish_state(id(current_tool) + ": Moonraker error " + std::to_string(response->status_code));
+                        }
+                on_error:
+                  then:
+                    - lambda: |-
+                        ESP_LOGW("spool", "Moonraker not reachable");
+                        id(last_result).publish_state(id(current_tool) + ": Moonraker not reachable");
