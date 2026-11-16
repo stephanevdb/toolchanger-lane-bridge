@@ -1,0 +1,19 @@
+[project]
+name = "lanebridge"
+dynamic = ["version"]
+description = "Publish the Spoolman spool in each klipper-toolchanger tool to Moonraker's lane_data"
+requires-python = ">=3.9"
+dependencies = ["websockets>=13,<17"]
+
+[project.scripts]
+lanebridge = "lanebridge.__main__:main"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["lanebridge"]
+
+[tool.setuptools.dynamic]
+version = {attr = "lanebridge.__version__"}

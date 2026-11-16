@@ -1,0 +1,95 @@
+import unittest
+
+from lanebridge.lanes import build_lane, empty_lane, lane_key, normalize_color, stale_keys, tool_for_key
+from lanebridge.sources import MacroVariableSource, parse_spool_id
+
+# Shapes taken from the live Spoolman on the printer.
+PLA = {
+    "id": 6, "archived": False,
+    "filament": {"id": 7, "material": "PLA", "color_hex": "f0be02",
+                 "settings_extruder_temp": 210, "settings_bed_temp": 50},
+}
+ASA_NO_TEMPS = {"id": 9, "archived": False,
+                "filament": {"id": 11, "material": "ASA", "color_hex": "404040"}}
+
+
+class LaneTests(unittest.TestCase):
+    def test_normal(self):
+        self.assertEqual(build_lane(1, PLA), {
+            "color": "#f0be02", "material": "PLA", "bed_temp": 50, "nozzle_temp": 210,
+            "scan_time": "", "td": "", "lane": "1", "spool_id": 6,
+        })
+
+    def test_lane_is_string(self):
+        # Orca skips lanes whose "lane" is not a JSON string.
+        self.assertIsInstance(build_lane(3, PLA)["lane"], str)
+        self.assertIsInstance(build_lane(3, None)["lane"], str)
+
+    def test_missing_temps(self):
+        e = build_lane(0, ASA_NO_TEMPS)
+        self.assertIsNone(e["nozzle_temp"])
+        self.assertIsNone(e["bed_temp"])
+        self.assertEqual((e["material"], e["color"], e["spool_id"]), ("ASA", "#404040", 9))
+
+    def test_multi_colour_uses_first(self):
+        s = {"id": 3, "filament": {"material": "PLA", "color_hex": None,
+                                   "multi_color_hexes": "FF0000,00ff00,0000FF",
+                                   "multi_color_direction": "coaxial"}}
+        self.assertEqual(build_lane(0, s)["color"], "#ff0000")
+
+    def test_missing_colour(self):
+        s = {"id": 4, "filament": {"material": "PETG"}}
+        e = build_lane(0, s)
+        self.assertEqual(e["color"], "")
+        self.assertEqual(e["material"], "PETG")
+
+    def test_archived_spool_is_empty(self):
+        s = dict(PLA, archived=True)
+        self.assertEqual(build_lane(1, s), empty_lane(1))
+        self.assertEqual(build_lane(1, s, archived_as_empty=False)["spool_id"], 6)
+
+    def test_spool_404_and_empty_tool(self):
+        self.assertEqual(build_lane(0, None), {
+            "color": "", "material": "", "bed_temp": None, "nozzle_temp": None,
+            "scan_time": "", "td": "", "lane": "0", "spool_id": None,
+        })
+
+    def test_bad_temps(self):
+        s = {"id": 1, "filament": {"material": "PLA", "settings_extruder_temp": 0,
+                                   "settings_bed_temp": "abc"}}
+        e = build_lane(0, s)
+        self.assertIsNone(e["nozzle_temp"])
+        self.assertIsNone(e["bed_temp"])
+
+    def test_colours(self):
+        self.assertEqual(normalize_color("#ABCDEF"), "#abcdef")
+        self.assertEqual(normalize_color("abcdef80"), "#abcdef")
+        self.assertEqual(normalize_color("0x123456"), "#123456")
+        self.assertEqual(normalize_color("#None"), "")
+        self.assertEqual(normalize_color(None), "")
+
+    def test_keys(self):
+        self.assertEqual(lane_key(0), "lane1")
+        self.assertEqual(tool_for_key("lane2"), 1)
+        self.assertIsNone(tool_for_key("lane0"))
+        self.assertIsNone(tool_for_key("other"))
+        self.assertEqual(stale_keys(["lane1", "lane2", "lane3", "lane10", "x"], [0, 1]),
+                         ["lane3", "lane10"])
+
+
+class SourceTests(unittest.TestCase):
+    def test_parse_spool_id(self):
+        for raw, want in [(9, 9), ("9", 9), (9.0, 9), (None, None), ("None", None),
+                          ("", None), (0, None), (-1, None), (True, None), ("'7'", 7)]:
+            self.assertEqual(parse_spool_id(raw), want, raw)
+
+    def test_extract(self):
+        src = MacroVariableSource("gcode_macro T{tool}", "spool_id")
+        self.assertEqual(src.subscription([0, 1]),
+                         {"gcode_macro T0": ["spool_id"], "gcode_macro T1": ["spool_id"]})
+        status = {"gcode_macro T0": {"spool_id": 9}, "gcode_macro T1": {"color": "c44"}}
+        self.assertEqual(src.extract(status, [0, 1]), {0: 9})
+
+
+if __name__ == "__main__":
+    unittest.main()

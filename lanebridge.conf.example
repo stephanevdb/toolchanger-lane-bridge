@@ -1,0 +1,29 @@
+# lanebridge.conf - copy to ~/printer_data/config/lanebridge.conf
+# Every option is optional; the values below are the defaults.
+
+[moonraker]
+# Moonraker on this host. localhost is a trusted client, so no API key is needed.
+websocket_url: ws://localhost:7125/websocket
+
+[tools]
+# "auto" reads the tool numbers from [toolchanger] (tool_numbers).
+# Or list them, e.g.: tools: 0, 1, 2
+tools: auto
+# Klipper object and variable that hold each tool's Spoolman spool ID.
+# {tool} is replaced with the tool number.
+object: gcode_macro T{tool}
+variable: spool_id
+
+[lanes]
+namespace: lane_data
+# Treat an archived spool as "nothing loaded".
+archived_as_empty: True
+
+[spoolman]
+# Seconds between re-reading spools from Spoolman (Moonraker does not forward
+# Spoolman edit events). A tool's spool is always re-read when it changes.
+refresh_interval: 300
+
+[logging]
+file: ~/printer_data/logs/lanebridge.log
+level: INFO

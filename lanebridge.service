@@ -1,0 +1,15 @@
+[Unit]
+Description=Spoolman to lane_data bridge for klipper-toolchanger
+Documentation=file://%HOME%/toolchanger-lane-bridge/README.md
+After=network.target moonraker.service
+
+[Service]
+Type=simple
+User=%USER%
+WorkingDirectory=%HOME%/toolchanger-lane-bridge
+ExecStart=%HOME%/lanebridge-env/bin/python -m lanebridge -c %HOME%/printer_data/config/lanebridge.conf
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
