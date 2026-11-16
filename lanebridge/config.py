@@ -18,6 +18,7 @@ class Config:
     variable: str = "spool_id"
     namespace: str = "lane_data"
     archived_as_empty: bool = True
+    temp_macro: str = "_LANE_TEMPS"  # Klipper macro that gets t<N> = spool nozzle temp; "" = off
     refresh_interval: float = 300.0
     log_file: str = "~/printer_data/logs/lanebridge.log"
     log_level: str = "INFO"
@@ -53,6 +54,7 @@ def load(path: Optional[str] = None) -> Config:
     cfg.variable = get("tools", "variable", cfg.variable)
     cfg.namespace = get("lanes", "namespace", cfg.namespace)
     cfg.archived_as_empty = cp.getboolean("lanes", "archived_as_empty", fallback=cfg.archived_as_empty)
+    cfg.temp_macro = get("klipper", "temp_macro", cfg.temp_macro).strip()
     cfg.refresh_interval = cp.getfloat("spoolman", "refresh_interval", fallback=cfg.refresh_interval)
     cfg.log_file = get("logging", "file", cfg.log_file)
     cfg.log_level = get("logging", "level", cfg.log_level).upper()

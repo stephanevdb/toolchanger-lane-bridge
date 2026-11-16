@@ -165,6 +165,35 @@ class BridgeTests(unittest.IsolatedAsyncioTestCase):
         await Bridge(self.cfg).run_once()
         self.assertEqual(sorted(self.lanes()), ["lane1"])
 
+    async def test_temps_pushed_to_klipper(self):
+        await self.start()
+        await wait_for(lambda: self.fake.macro_vars.get("t1") == 210)
+        self.assertEqual(self.fake.macro_vars.get("t0"), 0)  # spool 9 has no temperature
+        sent = self.fake.count("printer.gcode.script")
+        await self.fake.set_spool(1, 6)  # same spool: nothing new to send
+        await asyncio.sleep(0.2)
+        self.assertEqual(self.fake.count("printer.gcode.script"), sent)
+        await self.fake.set_spool(0, 6)
+        await wait_for(lambda: self.fake.macro_vars.get("t0") == 210)
+        await self.fake.set_spool(0, None)
+        await wait_for(lambda: self.fake.macro_vars.get("t0") == 0)
+
+    async def test_temps_resent_after_klippy_restart(self):
+        await self.start()
+        await wait_for(lambda: self.fake.macro_vars.get("t1") == 210)
+        self.fake.macro_vars.clear()
+        await self.fake.notify("notify_klippy_disconnected", [])
+        await wait_for(lambda: self.fake.macro_vars.get("t1") == 210)
+
+    async def test_missing_temp_macro_does_not_break_lanes(self):
+        self.fake.temp_macro_installed = False
+        await self.start()
+        self.assertEqual(self.lanes()["lane1"]["material"], "ASA")
+        tries = self.fake.count("printer.gcode.script")
+        await self.fake.set_spool(0, 6)
+        await wait_for(lambda: self.lanes()["lane1"]["spool_id"] == 6)
+        self.assertEqual(self.fake.count("printer.gcode.script"), tries)  # gave up after one try
+
 
 if __name__ == "__main__":
     unittest.main()

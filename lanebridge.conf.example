@@ -19,6 +19,12 @@ namespace: lane_data
 # Treat an archived spool as "nothing loaded".
 archived_as_empty: True
 
+[klipper]
+# Macro whose variables t0, t1, ... are set to each tool's spool nozzle temperature
+# (0 = unknown), so load/unload macros can heat to the right temperature.
+# Leave empty to turn this off. See klipper/lanebridge_temps.cfg.
+temp_macro: _LANE_TEMPS
+
 [spoolman]
 # Seconds between re-reading spools from Spoolman (Moonraker does not forward
 # Spoolman edit events). A tool's spool is always re-read when it changes.

@@ -129,8 +129,29 @@ optional; see [`lanebridge.conf.example`](lanebridge.conf.example). The most use
 * `[spoolman] refresh_interval`: how often spools are re-read, since Moonraker doesn't forward
   Spoolman edit events. Default 300 s.
 
+* `[klipper] temp_macro`: Klipper macro that gets each tool's spool nozzle temperature as
+  `t0`, `t1`, ... (default `_LANE_TEMPS`; empty turns it off). See below.
+
 Restart the service after editing: `sudo systemctl restart lanebridge` (or use the service
 controls in Fluidd/Mainsail).
+
+### Spool temperatures in Klipper macros
+
+Load and unload macros can't ask Spoolman which temperature a spool needs. lanebridge can
+tell them: it sets `t<N>` in a small macro to the nozzle temperature of the spool on tool N
+(the filament's extruder temperature in Spoolman, 0 when unknown). It only sends G-code when
+a value changes, and sends all of them again after a Klipper restart.
+
+1. Copy [`klipper/lanebridge_temps.cfg`](klipper/lanebridge_temps.cfg) to
+   `~/printer_data/config/` and add `[include lanebridge_temps.cfg]` to `printer.cfg`.
+2. Use it as the default temperature in your macros:
+
+   ```jinja
+   {% set spool_temp = printer['gcode_macro _LANE_TEMPS']['t' ~ tool_nr]|default(0)|int %}
+   {% set temp = params.TEMP|float if params.TEMP is defined else (spool_temp if spool_temp > 0 else 240) %}
+   ```
+
+Without the macro, lanebridge logs one warning and the lanes keep working.
 
 ## Run by hand
 

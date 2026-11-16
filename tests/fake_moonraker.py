@@ -18,6 +18,8 @@ class FakeMoonraker:
         self.db: Dict[str, Dict[str, Any]] = {}  # survives restarts, like the real one
         self.klippy_state = "ready"
         self.spoolman_up = True
+        self.temp_macro_installed = True
+        self.macro_vars: Dict[str, Any] = {}
         self.calls: List[tuple] = []
         self.port: Optional[int] = None
         self._server = None
@@ -109,6 +111,12 @@ class FakeMoonraker:
         if method == "server.database.delete_item":
             val = self.db.get(p["namespace"], {}).pop(p["key"])
             return {"namespace": p["namespace"], "key": p["key"], "value": val}
+        if method == "printer.gcode.script":
+            parts = dict(w.split("=", 1) for w in p["script"].split()[1:])
+            if not self.temp_macro_installed:
+                raise KeyError("Unknown gcode_macro '%s'" % parts["MACRO"].lower())
+            self.macro_vars[parts["VARIABLE"]] = int(parts["VALUE"])
+            return "ok"
         if method == "server.spoolman.proxy":
             if not self.spoolman_up:
                 return {"response": None, "error": {"status_code": 503, "message": "down"}}

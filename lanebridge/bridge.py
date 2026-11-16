@@ -46,6 +46,8 @@ class Bridge:
         self._pending_force: Set[int] = set()
         self._debounce_task: Optional[asyncio.Task] = None
         self._warned: Set[str] = set()
+        self._temps: Dict[int, int] = {}  # what we last set in Klipper's temp macro
+        self._temps_off = False
         self.session_established = False
 
     # ------------------------------------------------------------------ rpc
@@ -117,7 +119,9 @@ class Bridge:
                         self._warn_once(f"missing{sid}", "T%d: spool %d not found in Spoolman", t, sid)
                     else:
                         self._warned.discard(f"missing{sid}")
-                await self._write(t, build_lane(t, spool, self.cfg.archived_as_empty))
+                entry = build_lane(t, spool, self.cfg.archived_as_empty)
+                await self._write(t, entry)
+                await self._push_temp(t, entry)
 
     async def _write(self, tool: int, entry: dict) -> bool:
         key = lane_key(tool)
@@ -137,6 +141,33 @@ class Bridge:
         (log.info if identity_changed(old, entry) else log.debug)(
             "T%d -> %s: %s", tool, key, describe(entry))
         return True
+
+    async def _push_temp(self, tool: int, entry: dict) -> None:
+        """Mirror the spool's nozzle temperature into a Klipper macro variable (t<tool>).
+
+        Only sent when the value changes, so prints don't get extra G-code.
+        """
+        macro = self.cfg.temp_macro
+        if not macro or self._temps_off:
+            return
+        temp = entry.get("nozzle_temp")
+        value = int(round(temp)) if isinstance(temp, (int, float)) and temp > 0 else 0
+        if self._temps.get(tool) == value:
+            return
+        script = f"SET_GCODE_VARIABLE MACRO={macro} VARIABLE=t{tool} VALUE={value}"
+        if self.dry_run:
+            self.out(f"T{tool} temp (would run): {script}")
+            return
+        try:
+            await self._call("printer.gcode.script", {"script": script})
+        except MoonrakerError as e:
+            # Usually: the macro isn't installed. Lanes still work; just stop trying.
+            self._temps_off = True
+            self._warn_once("tempmacro", "can't set %s.t%d (%s); add klipper/lanebridge_temps.cfg "
+                            "or set [klipper] temp_macro to empty", macro, tool, e.message)
+            return
+        self._temps[tool] = value
+        log.debug("T%d nozzle temp -> %d", tool, value)
 
     async def load_existing(self) -> Dict[str, dict]:
         try:
@@ -208,6 +239,9 @@ class Bridge:
         self.spool_ids.update(self.source.extract((res or {}).get("status", {}), tools))
         await self.load_existing()
         await self.delete_keys(stale_keys(self.written, tools))
+        # Klipper forgets macro variables on restart: send every tool's temp again.
+        self._temps = {}
+        self._temps_off = False
         await self.sync(tools, force=True)
 
     # ------------------------------------------------------------- lifetime
